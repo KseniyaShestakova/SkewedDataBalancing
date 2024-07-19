@@ -1,1 +1,0 @@
-/scratch/pelago/llvm-14/opt/bin/clang++ -g CMakeFiles/storage_engine.dir/main.cpp.o -o storage_engine 

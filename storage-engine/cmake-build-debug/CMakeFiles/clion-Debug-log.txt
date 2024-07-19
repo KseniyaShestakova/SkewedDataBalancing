@@ -1,4 +1,0 @@
-/scratch/pelago/llvm-14/opt/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/scratch/pelago/llvm-14/opt/bin/clang -DCMAKE_CXX_COMPILER=/scratch/pelago/llvm-14/opt/bin/clang++ -G "CodeBlocks - Unix Makefiles" -S /tmp/tmp.yugr0WKFU9 -B /tmp/tmp.yugr0WKFU9/cmake-build-debug
--- Configuring done
--- Generating done
--- Build files have been written to: /tmp/tmp.yugr0WKFU9/cmake-build-debug

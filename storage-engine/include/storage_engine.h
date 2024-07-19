@@ -4,11 +4,14 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <fcntl.h>
+#include <unistd.h>
 
 void foo();
 
 static const size_t NUMBER_OF_FILES = 10; // TODO: make more flexible
 static const long BLOCK_SIZE = 16;
+static const long BLOCK_VALUE_COUNT = BLOCK_SIZE / sizeof(int);
 
 struct BlockMetadata {
     size_t file_id;
@@ -46,31 +49,53 @@ class StorageMetadata {
     friend StorageEngine;
 };
 
+class BlockReader {
+    char* buffer;
+
+  public:
+    BlockReader(const std::string& filename, size_t offset);
+    ~BlockReader();
+
+    int read_int(size_t num);
+    int read_char(size_t num);
+
+    std::string get_content();
+};
+
 class
     StorageEngine {
+  public:
+    using BlockId = size_t;
+
+  private:
     std::filesystem::path path;
     size_t next_id;
     StorageMetadata storage_metadata;
 
-    size_t round_robin_file_selection() const;
-    size_t one_disk_selection() const;
+    BlockId round_robin_file_selection() const;
+    BlockId one_disk_selection() const;
 
     BlockMetadata get_block_metadata(size_t block_id);
 
   public:
+
     explicit StorageEngine(const std::filesystem::path& path);
 
     enum IdSelectionMode {
         RoundRobin,
         OneDisk,
     };
-    size_t create_block(IdSelectionMode mode = IdSelectionMode::RoundRobin);
+    BlockId create_block(IdSelectionMode mode = IdSelectionMode::RoundRobin);
 
-    auto get_block(size_t block_id);
+    BlockReader get_block(BlockId block_id);
 
-    int write(char* buffer, size_t block_id);
+    int write(char* buffer, BlockId block_id);
 
     StorageMetadata get_metadata();
+
+    int execute_query(const std::vector<BlockId>& col_a,
+                      const std::vector<BlockId>& col_b,
+                      int upper_bound);
 
     friend std::ostream & operator<<( std::ostream&, const StorageEngine&);
 };

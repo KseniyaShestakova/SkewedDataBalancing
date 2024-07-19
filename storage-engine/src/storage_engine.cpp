@@ -1,26 +1,27 @@
 #include <storage_engine.h>
 
 void foo() {
-  std::cout << "foo" << std::endl;
+    std::cout << "foo" << std::endl;
 }
 
-
+void create_or_truncate(const std::string& filename) {
+    int fd = open(filename.c_str(), O_RDWR | O_TRUNC | O_CREAT | O_DIRECT, 0666);
+    close(fd);
+}
 
 BlockMetadata::BlockMetadata() : file_id(-1),offset(-1) {}
 BlockMetadata::BlockMetadata(size_t file_id, long offset) : file_id(file_id), offset(offset) {}
 
 int BlockMetadata::sync(const std::filesystem::path& path, size_t block_id) {
-    std::fstream out;
-    out.open(path, std::ios::in | std::ios::out |std::ios::binary);
-    if (!out.is_open()) {
+    int fd = open(path.generic_string().c_str(), O_RDWR);
+    if (fd < 0) {
         return -1;
     }
-    out.seekp(sizeof(BlockMetadata) * block_id);
 
-    char* block_metadata_ptr = reinterpret_cast<char*>(this);
-    out.write(block_metadata_ptr, sizeof(BlockMetadata));
+    void* block_metadata_ptr = reinterpret_cast<void*>(this);
+    size_t bytes_written = pwrite(fd, block_metadata_ptr, sizeof (BlockMetadata), sizeof(BlockMetadata) * block_id);
 
-    out.close();
+    close(fd);
     return 0;
 }
 
@@ -32,6 +33,7 @@ StorageMetadata::StorageMetadata() : block_metadata_path(),
 }
 
 void StorageMetadata::read_existing_metadata(const std::filesystem::path& path) {
+    // we only call this from the constructors, so it's fine to use fstream here
     std::ifstream in;
     in.open(path);
 
@@ -55,9 +57,7 @@ void StorageMetadata::create_new_storage(const std::filesystem::path& path) {
     filenames.resize(number_of_files, "");
     block_count_per_file.resize(number_of_files, 0);
 
-    std::ofstream out;
-    out.open(block_metadata_path, std::ios::trunc);
-    out.close();
+    create_or_truncate(block_metadata_path);
 
     create_files(path);
     sync(path);
@@ -74,37 +74,32 @@ StorageMetadata::StorageMetadata(const std::filesystem::path& path) {
 
 void StorageMetadata::create_files(const std::filesystem::path& path) {
     for (int i = 1; i <= number_of_files; ++i) {
-        std::ofstream file;
         std::string filename = path.generic_string() + "_nvme" + std::to_string(i);
-        file.open(filename, std::ios::trunc);
+        create_or_truncate(filename);
+
         filenames[i - 1] = filename;
-        file.close();
     }
 }
 
 int StorageMetadata::sync(const std::filesystem::path& path) {
-    std::ofstream out;
-    out.open(path, std::ios::trunc);
+    create_or_truncate(path.generic_string());
 
-    if (!out.is_open()) {
-        return -1; // some error handling should be here
-    }
-    out.close();
+    int fd = open(path.generic_string().c_str(), O_WRONLY);
+    std::string output_string = std::to_string(number_of_files) + "\n";
+    output_string += block_metadata_path.generic_string() + "\n";
 
-    out.open(path, std::ios ::app);
-    if (!out.is_open()) {
-        return -1;
-    }
-    out << number_of_files << '\n';
-    out << block_metadata_path.generic_string() << '\n';
     for (auto& filename: filenames) {
-        out << filename << " ";
+        output_string += filename + " ";
     }
-    out << "\n";
+    output_string += '\n';
+
     for (auto num: block_count_per_file) {
-        out << num << " ";
+        output_string + std::to_string(num) + " ";
     }
-    out.close();
+
+    pwrite(fd, (void*)output_string.c_str(), output_string.size(), 0);
+    close(fd);
+
     return 0;
 }
 
@@ -132,22 +127,52 @@ std::ostream & operator<<(std::ostream& os, const StorageMetadata& metadata) {
     return os;
 }
 
-size_t StorageEngine::round_robin_file_selection() const {
+
+BlockReader::BlockReader(const std::string& filename, size_t offset) {
+    buffer = new char[BLOCK_SIZE];
+
+    int fd = open(filename.c_str(), O_RDONLY);
+    pread(fd, buffer, BLOCK_SIZE, offset);
+    close(fd);
+}
+
+BlockReader::~BlockReader() {
+    delete[] buffer;
+}
+
+int BlockReader::read_int(size_t num) {
+    int* int_buffer = reinterpret_cast<int*>(buffer);
+    return int_buffer[num];
+}
+
+int BlockReader::read_char(size_t num) {
+    return buffer[num];
+}
+
+std::string BlockReader::get_content() { // this function is mostly needed for testing
+    std::string str(buffer);
+    str.resize(BLOCK_SIZE);
+    return str;
+}
+
+
+StorageEngine::BlockId StorageEngine::round_robin_file_selection() const {
     return next_id % storage_metadata.number_of_files;
 }
 
-size_t StorageEngine::one_disk_selection() const {
+StorageEngine::BlockId StorageEngine::one_disk_selection() const {
     return 0;
 }
 
 BlockMetadata StorageEngine::get_block_metadata(size_t block_id) {
-    std::ifstream in;
-    in.open(storage_metadata.block_metadata_path, std::ios::in | std::ios::binary);
+    int fd = open(storage_metadata.block_metadata_path.c_str(), O_RDONLY);
 
     BlockMetadata block_metadata;
-    in.seekg(block_id * sizeof(BlockMetadata));
-    in.read(reinterpret_cast<char*>(&block_metadata), sizeof(block_metadata));
-    in.close();
+    size_t offset = block_id * sizeof(BlockMetadata);
+    pread(fd, reinterpret_cast<void*>(&block_metadata), sizeof(block_metadata), offset);
+
+    close(fd);
+
     return block_metadata;
 }
 
@@ -155,7 +180,8 @@ StorageEngine::StorageEngine(const std::filesystem::path& path): path(path), nex
     storage_metadata = StorageMetadata(path);
     next_id = storage_metadata.block_count();
 };
-size_t StorageEngine::create_block(StorageEngine::IdSelectionMode mode) {
+
+StorageEngine::BlockId StorageEngine::create_block(StorageEngine::IdSelectionMode mode) {
     size_t file_id;
     switch (mode) {
     case IdSelectionMode::RoundRobin:
@@ -179,37 +205,18 @@ size_t StorageEngine::create_block(StorageEngine::IdSelectionMode mode) {
 
 }
 
-auto StorageEngine::get_block(size_t block_id) {
-    char* buffer = new char[BLOCK_SIZE];
-    auto deleter = [](char* ptr) {
-        std::cout << "called deleter\n";
-        delete[] ptr;
-    };
-    std::unique_ptr<char, decltype(deleter)> uniq(buffer, deleter);
-
+BlockReader StorageEngine::get_block(StorageEngine::BlockId block_id) {
     BlockMetadata block_metadata = get_block_metadata(block_id);
-
-    std::ifstream in;
-    in.open(storage_metadata.filenames[block_metadata.file_id], std::ios::in);
-    in.seekg(block_metadata.offset);
-    in.read(buffer, BLOCK_SIZE);
-    in.close();
-
-    return uniq;
+    return { storage_metadata.filenames[block_metadata.file_id],
+            static_cast<size_t>(block_metadata.offset) };
 
 }
-int StorageEngine::write(char* buffer, size_t block_id) {
+int StorageEngine::write(char* buffer, StorageEngine::BlockId block_id) {
     BlockMetadata block_metadata = get_block_metadata(block_id);
 
-    std::fstream out;
-    out.open(storage_metadata.filenames[block_metadata.file_id],
-             std::ios::in | std::ios::out |std::ios::binary);
-    if (!out.is_open()) {
-        return -1;
-    }
-    out.seekp(block_metadata.offset);
-    out.write(buffer, BLOCK_SIZE);
-    out.close();
+    int fd = open(storage_metadata.filenames[block_metadata.file_id].c_str(), O_WRONLY);
+    pwrite(fd, buffer, BLOCK_SIZE, block_metadata.offset);
+    close(fd);
 
     return 0;
 }
@@ -254,4 +261,34 @@ std::vector<std::string> StorageMetadata::get_filenames() {
 
 std::vector<size_t > StorageMetadata::get_block_count_per_file() {
     return this->block_count_per_file;
+}
+
+int StorageEngine::execute_query(const std::vector<StorageEngine::BlockId>& col_a,
+                                 const std::vector<StorageEngine::BlockId>& col_b,
+                                 int upper_bound) {
+    std::vector<bool> block_mask;
+    int sum = 0;
+    size_t BLOCK_VALUE_COUNT = BLOCK_SIZE / sizeof (int); // we assume that ints are stored in blocks
+
+    for (int t = 0; t < col_a.size(); ++t) {
+        BlockId col_a_block_id = col_a[t];
+        BlockId col_b_block_id = col_b[t];
+
+        auto col_a_block_reader = get_block(col_a_block_id);
+        block_mask.assign(BLOCK_VALUE_COUNT, false);
+
+        bool at_least_one_true = false;
+        for (int i = 0; i < BLOCK_VALUE_COUNT; ++i) {
+            block_mask[i] = (col_a_block_reader.read_int(i) < upper_bound);
+            at_least_one_true |= block_mask[i];
+        }
+        if (at_least_one_true) {
+            auto col_b_block_reader = get_block(col_b_block_id);
+
+            for (int i = 0; i < BLOCK_VALUE_COUNT; ++i) {
+                sum += block_mask[i] * col_b_block_reader.read_int(i);
+            }
+        }
+    }
+    return sum;
 }

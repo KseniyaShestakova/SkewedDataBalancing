@@ -1,7 +1,10 @@
 #include <storage_engine.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
+#include <string.h>
+
 
 int main() {
-    StorageMetadata storage_metadata = StorageMetadata("new");
-    foo();
-    return 0;
+
 }

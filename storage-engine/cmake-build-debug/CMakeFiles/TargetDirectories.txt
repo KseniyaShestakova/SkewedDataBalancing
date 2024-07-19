@@ -1,3 +1,0 @@
-/tmp/tmp.yugr0WKFU9/cmake-build-debug/CMakeFiles/storage_engine.dir
-/tmp/tmp.yugr0WKFU9/cmake-build-debug/CMakeFiles/edit_cache.dir
-/tmp/tmp.yugr0WKFU9/cmake-build-debug/CMakeFiles/rebuild_cache.dir
