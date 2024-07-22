@@ -7,6 +7,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <unordered_map>
+#include "absl/status/statusor.h"
+#include "absl/status/status.h"
+
 
 static const size_t NUMBER_OF_FILES = 10; // TODO: make more flexible
 static const long BLOCK_SIZE = 16;
@@ -22,7 +25,7 @@ struct BlockMetadata {
     BlockMetadata();
     BlockMetadata(size_t file_id, long offset);
 
-    int sync(int fd, size_t block_id);
+    absl::Status sync(int fd, size_t block_id);
 };
 
 
@@ -39,23 +42,26 @@ class StorageMetadata {
     StorageMetadata();
     explicit StorageMetadata(const std::filesystem::path& path);
 
-    int sync(const std::filesystem::path& path);
+    absl::Status sync(const std::filesystem::path& path);
     size_t block_count();
     std::filesystem::path get_block_metadata();
     std::vector<std::string> get_filenames();
     std::vector<size_t> get_block_count_per_file();
 
-
     friend std::ostream & operator<<( std::ostream&, const StorageMetadata&);
     friend StorageEngine;
 };
 
-class BlockReader {
+class alignas(512) BlockReader {
     char* buffer;
-
+    absl::Status status;
   public:
     BlockReader(int fd, size_t offset);
+    BlockReader(const BlockReader&);
     ~BlockReader();
+
+    bool is_ok();
+    absl::Status get_status();
 
     int read_int(size_t num);
     int read_char(size_t num);
@@ -92,15 +98,15 @@ class
         RoundRobin,
         OneDisk,
     };
-    BlockId create_block(IdSelectionMode mode = IdSelectionMode::RoundRobin);
+    absl::StatusOr<BlockId> create_block(IdSelectionMode mode = IdSelectionMode::RoundRobin);
 
-    BlockReader get_block(BlockId block_id);
+    absl::StatusOr<BlockReader> get_block(BlockId block_id);
 
-    int write(char* buffer, BlockId block_id);
+    absl::Status write(char* buffer, BlockId block_id);
 
     StorageMetadata get_metadata();
 
-    int execute_query(const std::vector<BlockId>& col_a,
+    absl::StatusOr<int> execute_query(const std::vector<BlockId>& col_a,
                       const std::vector<BlockId>& col_b,
                       int upper_bound);
 

@@ -17,6 +17,8 @@ include_directories(include)
 
 enable_testing()
 
+add_subdirectory(abseil-cpp)
+
 add_executable(${PROJECT_NAME}
         main.cpp
         src/storage_engine.cpp
@@ -31,7 +33,11 @@ add_executable(
 target_link_libraries(
         tests
         GTest::gtest_main
+        absl::status
+        absl::statusor
 )
+
+target_link_libraries(${PROJECT_NAME} absl::status absl::statusor)
 
 include(GoogleTest)
 gtest_discover_tests(tests)

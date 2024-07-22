@@ -10,11 +10,12 @@ void create_or_truncate(const std::string& filename) {
 BlockMetadata::BlockMetadata() : file_id(-1),offset(-1) {}
 BlockMetadata::BlockMetadata(size_t file_id, long offset) : file_id(file_id), offset(offset) {}
 
-int BlockMetadata::sync(int fd, size_t block_id) {
+absl::Status BlockMetadata::sync(int fd, size_t block_id) {
     void* block_metadata_ptr = reinterpret_cast<void*>(this);
     size_t bytes_written = pwrite(fd, block_metadata_ptr, sizeof (BlockMetadata), sizeof(BlockMetadata) * block_id);
 
-    return 0;
+    if (bytes_written == sizeof(BlockMetadata)) return absl::OkStatus();
+    return absl::UnknownError("BlockMetadata::sync error: number of written bytes is less than expected");
 }
 
 StorageMetadata::StorageMetadata() : block_metadata_path(),
@@ -73,7 +74,7 @@ void StorageMetadata::create_files(const std::filesystem::path& path) {
     }
 }
 
-int StorageMetadata::sync(const std::filesystem::path& path) {
+absl::Status StorageMetadata::sync(const std::filesystem::path& path) {
     create_or_truncate(path.generic_string());
 
     int fd = open(path.generic_string().c_str(), O_WRONLY);
@@ -89,10 +90,12 @@ int StorageMetadata::sync(const std::filesystem::path& path) {
         output_string + std::to_string(num) + " ";
     }
 
-    pwrite(fd, (void*)output_string.c_str(), output_string.size(), 0);
+    size_t bytes_written = pwrite(fd, (void*)output_string.c_str(), output_string.size(), 0);
     close(fd);
 
-    return 0;
+    if (bytes_written == output_string.size())
+        return absl::OkStatus();
+    return absl::UnknownError("StorageMetadata::sync error: number of written bytes is less than expected");
 }
 
 size_t StorageMetadata::block_count() {
@@ -122,11 +125,26 @@ std::ostream & operator<<(std::ostream& os, const StorageMetadata& metadata) {
 
 BlockReader::BlockReader(int fd, size_t offset) {
     buffer = new char[BLOCK_SIZE];
-    pread(fd, buffer, BLOCK_SIZE, offset);
+    size_t bytes_read = pread(fd, buffer, BLOCK_SIZE, offset);
+    status = (bytes_read == BLOCK_SIZE) ? absl::OkStatus() :
+                                        absl::UnknownError("BlockReader::BlockReader error: number of read bytes is less than expected");
+}
+
+BlockReader::BlockReader(const BlockReader& other) {
+    buffer = new char[BLOCK_SIZE];
+    memcpy(buffer, other.buffer, BLOCK_SIZE);
 }
 
 BlockReader::~BlockReader() {
     delete[] buffer;
+}
+
+bool BlockReader::is_ok() {
+    return status.ok();
+}
+
+absl::Status BlockReader::get_status() {
+    return status;
 }
 
 int BlockReader::read_int(size_t num) {
@@ -179,7 +197,7 @@ StorageEngine::~StorageEngine() {
     close(block_metadata_fd);
 }
 
-StorageEngine::BlockId StorageEngine::create_block(StorageEngine::IdSelectionMode mode) {
+absl::StatusOr<StorageEngine::BlockId> StorageEngine::create_block(StorageEngine::IdSelectionMode mode) {
     size_t file_id;
     switch (mode) {
     case IdSelectionMode::RoundRobin:
@@ -193,29 +211,42 @@ StorageEngine::BlockId StorageEngine::create_block(StorageEngine::IdSelectionMod
 
     std::filesystem::resize_file(storage_metadata.filenames[file_id], offset + BLOCK_SIZE);
 
-    int res = block_metadata.sync(block_metadata_fd, next_id);
-    if (res == 0) {
-        storage_metadata.block_count_per_file[file_id] += 1;
-        storage_metadata.sync(path);
-        return next_id++;
+    auto res = block_metadata.sync(block_metadata_fd, next_id);
+    if (!res.ok())
+        return res;
+
+    storage_metadata.block_count_per_file[file_id] += 1;
+    auto sync_res = storage_metadata.sync(path);
+    if (!sync_res.ok())
+        return sync_res;
+    return next_id++;
+}
+
+
+absl::StatusOr<BlockReader> StorageEngine::get_block(StorageEngine::BlockId block_id) {
+    int fd = get_block_file_fd(block_id);
+    if (fd == -1) {
+        return absl::UnavailableError("StorageEngine::get_block error: invalid file descriptor");
     }
-    return -1;
+    BlockMetadata block_metadata = get_block_metadata(block_id);
+    auto block_reader = BlockReader(fd, static_cast<size_t>(block_metadata.offset));
+    if (!block_reader.is_ok()) {
+        return block_reader.get_status();
+    }
+    return block_reader;
 
 }
 
-BlockReader StorageEngine::get_block(StorageEngine::BlockId block_id) {
-    int fd = get_block_file_fd(block_id);
-    BlockMetadata block_metadata = get_block_metadata(block_id);
-    return { fd, static_cast<size_t>(block_metadata.offset) };
-
-}
-int StorageEngine::write(char* buffer, StorageEngine::BlockId block_id) {
+absl::Status StorageEngine::write(char* buffer, StorageEngine::BlockId block_id) {
     BlockMetadata block_metadata = get_block_metadata(block_id);
 
     int fd = get_block_file_fd(block_id);
-    pwrite(fd, buffer, BLOCK_SIZE, block_metadata.offset);
+    if (fd == -1) return absl::UnavailableError("StorageEngine::write error: Invalid file descriptor");
+    size_t bytes_written = pwrite(fd, buffer, BLOCK_SIZE, block_metadata.offset);
+    if (bytes_written != BLOCK_SIZE)
+        return absl::UnknownError("StorageEngine::write error: number of written bytes is less than expected");
 
-    return 0;
+    return absl::OkStatus();
 }
 
 
@@ -260,7 +291,7 @@ std::vector<size_t > StorageMetadata::get_block_count_per_file() {
     return this->block_count_per_file;
 }
 
-int StorageEngine::execute_query(const std::vector<StorageEngine::BlockId>& col_a,
+absl::StatusOr<int> StorageEngine::execute_query(const std::vector<StorageEngine::BlockId>& col_a,
                                  const std::vector<StorageEngine::BlockId>& col_b,
                                  int upper_bound) {
     std::vector<bool> block_mask;
@@ -271,7 +302,9 @@ int StorageEngine::execute_query(const std::vector<StorageEngine::BlockId>& col_
         BlockId col_a_block_id = col_a[t];
         BlockId col_b_block_id = col_b[t];
 
-        auto col_a_block_reader = get_block(col_a_block_id);
+        auto get_block_a_res = get_block(col_a_block_id);
+        if (!get_block_a_res.ok()) return get_block_a_res.status();
+        auto col_a_block_reader = *get_block_a_res;
         block_mask.assign(BLOCK_VALUE_COUNT, false);
 
         bool at_least_one_true = false;
@@ -280,7 +313,9 @@ int StorageEngine::execute_query(const std::vector<StorageEngine::BlockId>& col_
             at_least_one_true |= block_mask[i];
         }
         if (at_least_one_true) {
-            auto col_b_block_reader = get_block(col_b_block_id);
+            auto get_block_b_res = get_block(col_b_block_id);
+            if (!get_block_b_res.ok()) return get_block_b_res.status();
+            auto col_b_block_reader = *get_block_b_res;
 
             for (int i = 0; i < BLOCK_VALUE_COUNT; ++i) {
                 sum += block_mask[i] * col_b_block_reader.read_int(i);

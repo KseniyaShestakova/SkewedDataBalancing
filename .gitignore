@@ -1,3 +1,4 @@
 storage-engine/cmake-build-debug/*
 /preliminary/.ipynb_checkpoints/*
-
+storage-engine/ cmake_install.cmake
+storage-engine/.idea/*

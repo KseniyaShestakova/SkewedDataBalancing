@@ -41,6 +41,25 @@ void output_column(int* column, size_t VALUE_COUNT, std::string column_name) {
     std::cout << '\n';
 }
 
+void check_create_block(StorageEngine& storage_engine,
+                        StorageEngine::BlockId id,
+                        StorageEngine::IdSelectionMode mode = StorageEngine::IdSelectionMode::RoundRobin) {
+    //ASSERT_EQ(i + blocks_per_column, storage_engine.create_block());
+    auto res = storage_engine.create_block(mode);
+    ASSERT_EQ(res.ok(), true);
+    if (res.ok()) ASSERT_EQ(*res, id);
+}
+
+void check_execute_query(int sum,
+                         StorageEngine& storage_engine,
+                         std::vector<StorageEngine::BlockId>& col_a,
+                         std::vector<StorageEngine::BlockId>& col_b,
+                         int upper_bound) {
+    auto res = storage_engine.execute_query(col_a, col_b, upper_bound);
+    ASSERT_EQ(res.ok(), true);
+    ASSERT_EQ(*res, sum);
+}
+
 void random_query_test(size_t blocks_per_column) {
     std::srand(std::time(nullptr));
 
@@ -74,20 +93,20 @@ void random_query_test(size_t blocks_per_column) {
     StorageEngine storage_engine(path);
 
     for (int i = 0; i < blocks_per_column; ++i) {
-        ASSERT_EQ(i, storage_engine.create_block());
+        check_create_block(storage_engine, i);
         int* curr_block_ptr = col_a_values + i * BLOCK_VALUE_COUNT;
-        ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(curr_block_ptr), i));
+        ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(curr_block_ptr), i).ok());
         col_a.push_back(i);
     }
 
     for (int i = 0; i < blocks_per_column; ++i) {
-        ASSERT_EQ(i + blocks_per_column, storage_engine.create_block());
+        check_create_block(storage_engine, i + blocks_per_column);
         int* curr_block_ptr = col_b_values + i * BLOCK_VALUE_COUNT;
-        ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(curr_block_ptr), i + blocks_per_column));
+        ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(curr_block_ptr), i + blocks_per_column).ok());
         col_b.push_back(i + blocks_per_column);
     }
 
-    ASSERT_EQ(b_sum, storage_engine.execute_query(col_a, col_b, upper_bound));
+    check_execute_query(b_sum, storage_engine, col_a, col_b, upper_bound);
 
     delete[] col_a_values;
     delete[] col_b_values;
@@ -179,7 +198,7 @@ TEST(StorageEngine, CreateBlockRoundRobin) {
     }
 
     for (int i = 0; i < NUMBER_OF_FILES; ++i) {
-        ASSERT_EQ(i, storage_engine.create_block(StorageEngine::IdSelectionMode::RoundRobin));
+        check_create_block(storage_engine, i, StorageEngine::IdSelectionMode::RoundRobin);
         ASSERT_EQ((i + 1) * sizeof(BlockMetadata), std::filesystem::file_size(block_metadata_path));
         ASSERT_EQ(BLOCK_SIZE, std::filesystem::file_size(filenames[i]));
     }
@@ -191,7 +210,7 @@ TEST(StorageEngine, CreateBlockRoundRobin) {
     // second round
     auto FILES_TO_CREATE = NUMBER_OF_FILES / 2;
     for (int i = 0; i < FILES_TO_CREATE; ++i) {
-        ASSERT_EQ(i + NUMBER_OF_FILES, storage_engine.create_block(StorageEngine::IdSelectionMode::RoundRobin));
+        check_create_block(storage_engine, i + NUMBER_OF_FILES, StorageEngine::IdSelectionMode::RoundRobin);
         ASSERT_EQ((i + 1 + NUMBER_OF_FILES) * sizeof(BlockMetadata), std::filesystem::file_size(block_metadata_path));
         ASSERT_EQ(2 * BLOCK_SIZE, std::filesystem::file_size(filenames[i]));
     }
@@ -215,7 +234,7 @@ TEST(StorageEngine, CreateBlockOneDisk) {
     size_t BLOCKS_TO_CREATE = 5;
 
     for (int i = 0; i < BLOCKS_TO_CREATE; ++i) {
-        ASSERT_EQ(i, storage_engine.create_block(StorageEngine::IdSelectionMode::OneDisk));
+        check_create_block(storage_engine, i, StorageEngine::IdSelectionMode::OneDisk);
         ASSERT_EQ((i + 1) * sizeof(BlockMetadata), std::filesystem::file_size(block_metadata_path));
         ASSERT_EQ((i + 1) * BLOCK_SIZE, std::filesystem::file_size(filenames[0]));
         auto block_count_per_file = storage_engine.get_metadata().get_block_count_per_file();
@@ -235,7 +254,7 @@ TEST(StorageEngine, ReadWrite) {
 
     size_t BLOCK_COUNT = 20;
     for (int i = 0; i < BLOCK_COUNT; ++i) {
-        ASSERT_EQ(i, storage_engine.create_block()); // make this assert to ensure that eveything is created as needed
+        check_create_block(storage_engine, i); // make this assert to ensure that eveything is created as needed
     }
     ASSERT_EQ(BLOCK_COUNT, storage_engine.get_metadata().block_count());
 
@@ -243,12 +262,13 @@ TEST(StorageEngine, ReadWrite) {
     generate_strings(contents, BLOCK_COUNT);
 
     for (int i = 0; i < BLOCK_COUNT; ++i) {
-        ASSERT_EQ(0, storage_engine.write(const_cast<char*>(contents[i].c_str()), i));
+        ASSERT_EQ(true, storage_engine.write(const_cast<char*>(contents[i].c_str()), i).ok());
     }
 
     for (int i = 0; i < BLOCK_COUNT; ++i) {
-        auto block_reader = storage_engine.get_block(i);
-        auto str = block_reader.get_content();
+        auto read_res = storage_engine.get_block(i);
+        ASSERT_EQ(read_res.ok(), true);
+        auto str = read_res->get_content();
         ASSERT_EQ(str, contents[i]);
     }
 }
@@ -259,15 +279,17 @@ TEST(StorageEngine, ReadWriteInt) {
 
     StorageEngine storage_engine(path);
 
-    ASSERT_EQ(0, storage_engine.create_block());
+    check_create_block(storage_engine, 0);
 
     int* int_buffer = new int[BLOCK_VALUE_COUNT];
     for (int i = 0; i < BLOCK_VALUE_COUNT; ++i) {
         int_buffer[i] = i;
     }
 
-    ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(int_buffer), 0));
-    auto block_reader = storage_engine.get_block(0);
+    ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(int_buffer), 0).ok());
+    auto read_res = storage_engine.get_block(0);
+    ASSERT_EQ(read_res.ok(), true);
+    auto block_reader = *read_res;
 
     for (int i = 0; i < BLOCK_VALUE_COUNT; ++i) {
         ASSERT_EQ(int_buffer[i], block_reader.read_int(i));
@@ -282,8 +304,13 @@ TEST(ExecuteQuery, OneBlockTestAllPass) {
 
     StorageEngine storage_engine(path);
 
-    auto a_block_id = storage_engine.create_block();
-    auto b_block_id = storage_engine.create_block();
+    auto a_create_res = storage_engine.create_block();
+    auto b_create_res = storage_engine.create_block();
+    ASSERT_EQ(a_create_res.ok(), true);
+    ASSERT_EQ(b_create_res.ok(), true);
+
+    auto a_block_id = *a_create_res;
+    auto b_block_id = *b_create_res;
 
     int* a_int_buffer = new int[BLOCK_VALUE_COUNT];
     int* b_int_buffer = new int[BLOCK_VALUE_COUNT];
@@ -294,13 +321,13 @@ TEST(ExecuteQuery, OneBlockTestAllPass) {
         b_sum += b_int_buffer[i];
     }
 
-    ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(a_int_buffer), a_block_id));
-    ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(b_int_buffer), b_block_id));
+    ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(a_int_buffer), a_block_id).ok());
+    ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(b_int_buffer), b_block_id).ok());
 
     std::vector<StorageEngine::BlockId> col_a(1, a_block_id);
     std::vector<StorageEngine::BlockId> col_b(1, b_block_id);
 
-    ASSERT_EQ(b_sum, storage_engine.execute_query(col_a, col_b, 5));
+    check_execute_query(b_sum, storage_engine, col_a, col_b, 5);
 }
 
 TEST(ExecuteQuery, OneBlockTestNonePass) {
@@ -309,8 +336,13 @@ TEST(ExecuteQuery, OneBlockTestNonePass) {
 
     StorageEngine storage_engine(path);
 
-    auto a_block_id = storage_engine.create_block();
-    auto b_block_id = storage_engine.create_block();
+    auto a_create_res = storage_engine.create_block();
+    auto b_create_res = storage_engine.create_block();
+    ASSERT_EQ(a_create_res.ok(), true);
+    ASSERT_EQ(b_create_res.ok(), true);
+
+    auto a_block_id = *a_create_res;
+    auto b_block_id = *b_create_res;
 
     int* a_int_buffer = new int[BLOCK_VALUE_COUNT];
     int* b_int_buffer = new int[BLOCK_VALUE_COUNT];
@@ -319,13 +351,13 @@ TEST(ExecuteQuery, OneBlockTestNonePass) {
         b_int_buffer[i] = i;
     }
 
-    ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(a_int_buffer), a_block_id));
-    ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(b_int_buffer), b_block_id));
+    ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(a_int_buffer), a_block_id).ok());
+    ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(b_int_buffer), b_block_id).ok());
 
     std::vector<StorageEngine::BlockId> col_a(1, a_block_id);
     std::vector<StorageEngine::BlockId> col_b(1, b_block_id);
 
-    ASSERT_EQ(0, storage_engine.execute_query(col_a, col_b, 5));
+    check_execute_query(0, storage_engine, col_a, col_b, 5);
 }
 
 TEST(ExecuteQuery, OneBlockTestHalfPass) {
@@ -334,8 +366,13 @@ TEST(ExecuteQuery, OneBlockTestHalfPass) {
 
     StorageEngine storage_engine(path);
 
-    auto a_block_id = storage_engine.create_block();
-    auto b_block_id = storage_engine.create_block();
+    auto a_create_res = storage_engine.create_block();
+    auto b_create_res = storage_engine.create_block();
+    ASSERT_EQ(a_create_res.ok(), true);
+    ASSERT_EQ(b_create_res.ok(), true);
+
+    auto a_block_id = *a_create_res;
+    auto b_block_id = *b_create_res;
 
     int* a_int_buffer = new int[BLOCK_VALUE_COUNT];
     int* b_int_buffer = new int[BLOCK_VALUE_COUNT];
@@ -344,13 +381,13 @@ TEST(ExecuteQuery, OneBlockTestHalfPass) {
         b_int_buffer[i] = i + 1;
     }
 
-    ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(a_int_buffer), a_block_id));
-    ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(b_int_buffer), b_block_id));
+    ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(a_int_buffer), a_block_id).ok());
+    ASSERT_EQ(true, storage_engine.write(reinterpret_cast<char*>(b_int_buffer), b_block_id).ok());
 
     std::vector<StorageEngine::BlockId> col_a(1, a_block_id);
     std::vector<StorageEngine::BlockId> col_b(1, b_block_id);
 
-    ASSERT_EQ(3, storage_engine.execute_query(col_a, col_b, 5));
+    check_execute_query(3, storage_engine, col_a, col_b, 5);
 }
 
 TEST(ExecuteQuery, RandomTests) {
