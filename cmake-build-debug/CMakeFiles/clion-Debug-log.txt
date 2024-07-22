@@ -1,0 +1,16 @@
+/scratch/pelago/llvm-14/opt/bin/cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=/scratch/pelago/llvm-14/opt/bin/clang -DCMAKE_CXX_COMPILER=/scratch/pelago/llvm-14/opt/bin/clang++ -G "CodeBlocks - Unix Makefiles" -S /tmp/tmp.HdzJYvSkNr -B /tmp/tmp.HdzJYvSkNr/cmake-build-debug
+-- The C compiler identification is Clang 14.0.0
+-- The CXX compiler identification is Clang 14.0.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /scratch/pelago/llvm-14/opt/bin/clang - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /scratch/pelago/llvm-14/opt/bin/clang++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /tmp/tmp.HdzJYvSkNr/cmake-build-debug

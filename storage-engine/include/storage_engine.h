@@ -6,12 +6,14 @@
 #include <filesystem>
 #include <fcntl.h>
 #include <unistd.h>
-
-void foo();
+#include <unordered_map>
 
 static const size_t NUMBER_OF_FILES = 10; // TODO: make more flexible
 static const long BLOCK_SIZE = 16;
 static const long BLOCK_VALUE_COUNT = BLOCK_SIZE / sizeof(int);
+
+class StorageEngine;
+
 
 struct BlockMetadata {
     size_t file_id;
@@ -20,10 +22,9 @@ struct BlockMetadata {
     BlockMetadata();
     BlockMetadata(size_t file_id, long offset);
 
-    int sync(const std::filesystem::path& path, size_t block_id);
+    int sync(int fd, size_t block_id);
 };
 
-class StorageEngine;
 
 class StorageMetadata {
     std::filesystem::path block_metadata_path;
@@ -53,7 +54,7 @@ class BlockReader {
     char* buffer;
 
   public:
-    BlockReader(const std::string& filename, size_t offset);
+    BlockReader(int fd, size_t offset);
     ~BlockReader();
 
     int read_int(size_t num);
@@ -77,6 +78,12 @@ class
 
     BlockMetadata get_block_metadata(size_t block_id);
 
+    // we want to keep frequently accessed files opened in order to enhance performance
+    std::vector<int> fd_cache;
+    int block_metadata_fd;
+
+    int get_block_file_fd(BlockId);
+
   public:
 
     explicit StorageEngine(const std::filesystem::path& path);
@@ -96,6 +103,8 @@ class
     int execute_query(const std::vector<BlockId>& col_a,
                       const std::vector<BlockId>& col_b,
                       int upper_bound);
+
+    ~StorageEngine();
 
     friend std::ostream & operator<<( std::ostream&, const StorageEngine&);
 };

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include <storage_engine.h>
+#include <cstdlib>
+#include <ctime>
 
 static const std::string STORAGE_PATH = "/home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store";
 
@@ -29,6 +31,66 @@ void generate_strings(std::vector<std::string>& contents, size_t BLOCK_COUNT) {
         }
         contents.emplace_back(curr);
     }
+}
+
+void output_column(int* column, size_t VALUE_COUNT, std::string column_name) {
+    std::cout << column_name << ": ";
+    for (int i = 0; i < VALUE_COUNT; ++i) {
+        std::cout << column[i] << ", ";
+    }
+    std::cout << '\n';
+}
+
+void random_query_test(size_t blocks_per_column) {
+    std::srand(std::time(nullptr));
+
+    std::vector<StorageEngine::BlockId> col_a;
+    std::vector<StorageEngine::BlockId> col_b;
+    auto VALUE_COUNT = BLOCK_VALUE_COUNT * blocks_per_column;
+    int* col_a_values = new int[VALUE_COUNT];
+    int* col_b_values = new int[VALUE_COUNT];
+
+    int modulo = 20;
+    int upper_bound = std::rand() % modulo;
+    int b_sum = 0;
+
+    for (int i = 0; i < VALUE_COUNT; ++i) {
+        col_a_values[i] = std::rand() % modulo;
+        col_b_values[i] = std::rand() % modulo;
+
+        if (col_a_values[i] < upper_bound) {
+            b_sum += col_b_values[i];
+        }
+    }
+    //-----------------output arguments---------------------------------
+    /*output_column(col_a_values, VALUE_COUNT, "col a");
+    output_column(col_b_values, VALUE_COUNT, "col b");
+    std::cout << "upper bound: " << upper_bound << '\n';
+    std::cout << "b_sum: " << b_sum << '\n';*/
+
+    std::filesystem::path path = STORAGE_PATH;
+    clean_storage(path);
+
+    StorageEngine storage_engine(path);
+
+    for (int i = 0; i < blocks_per_column; ++i) {
+        ASSERT_EQ(i, storage_engine.create_block());
+        int* curr_block_ptr = col_a_values + i * BLOCK_VALUE_COUNT;
+        ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(curr_block_ptr), i));
+        col_a.push_back(i);
+    }
+
+    for (int i = 0; i < blocks_per_column; ++i) {
+        ASSERT_EQ(i + blocks_per_column, storage_engine.create_block());
+        int* curr_block_ptr = col_b_values + i * BLOCK_VALUE_COUNT;
+        ASSERT_EQ(0, storage_engine.write(reinterpret_cast<char*>(curr_block_ptr), i + blocks_per_column));
+        col_b.push_back(i + blocks_per_column);
+    }
+
+    ASSERT_EQ(b_sum, storage_engine.execute_query(col_a, col_b, upper_bound));
+
+    delete[] col_a_values;
+    delete[] col_b_values;
 }
 
 TEST(StorageMetadata, NewStorage) {
@@ -289,4 +351,15 @@ TEST(ExecuteQuery, OneBlockTestHalfPass) {
     std::vector<StorageEngine::BlockId> col_b(1, b_block_id);
 
     ASSERT_EQ(3, storage_engine.execute_query(col_a, col_b, 5));
+}
+
+TEST(ExecuteQuery, RandomTests) {
+    random_query_test(1);
+    random_query_test(2);
+    random_query_test(4);
+    random_query_test(8);
+    random_query_test(16);
+    random_query_test(32);
+    random_query_test(64);
+    random_query_test(128);
 }

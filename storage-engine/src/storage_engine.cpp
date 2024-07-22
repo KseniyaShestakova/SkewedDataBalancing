@@ -1,8 +1,6 @@
 #include <storage_engine.h>
 
-void foo() {
-    std::cout << "foo" << std::endl;
-}
+
 
 void create_or_truncate(const std::string& filename) {
     int fd = open(filename.c_str(), O_RDWR | O_TRUNC | O_CREAT | O_DIRECT, 0666);
@@ -12,16 +10,10 @@ void create_or_truncate(const std::string& filename) {
 BlockMetadata::BlockMetadata() : file_id(-1),offset(-1) {}
 BlockMetadata::BlockMetadata(size_t file_id, long offset) : file_id(file_id), offset(offset) {}
 
-int BlockMetadata::sync(const std::filesystem::path& path, size_t block_id) {
-    int fd = open(path.generic_string().c_str(), O_RDWR);
-    if (fd < 0) {
-        return -1;
-    }
-
+int BlockMetadata::sync(int fd, size_t block_id) {
     void* block_metadata_ptr = reinterpret_cast<void*>(this);
     size_t bytes_written = pwrite(fd, block_metadata_ptr, sizeof (BlockMetadata), sizeof(BlockMetadata) * block_id);
 
-    close(fd);
     return 0;
 }
 
@@ -128,12 +120,9 @@ std::ostream & operator<<(std::ostream& os, const StorageMetadata& metadata) {
 }
 
 
-BlockReader::BlockReader(const std::string& filename, size_t offset) {
+BlockReader::BlockReader(int fd, size_t offset) {
     buffer = new char[BLOCK_SIZE];
-
-    int fd = open(filename.c_str(), O_RDONLY);
     pread(fd, buffer, BLOCK_SIZE, offset);
-    close(fd);
 }
 
 BlockReader::~BlockReader() {
@@ -165,13 +154,9 @@ StorageEngine::BlockId StorageEngine::one_disk_selection() const {
 }
 
 BlockMetadata StorageEngine::get_block_metadata(size_t block_id) {
-    int fd = open(storage_metadata.block_metadata_path.c_str(), O_RDONLY);
-
     BlockMetadata block_metadata;
     size_t offset = block_id * sizeof(BlockMetadata);
-    pread(fd, reinterpret_cast<void*>(&block_metadata), sizeof(block_metadata), offset);
-
-    close(fd);
+    pread(block_metadata_fd, reinterpret_cast<void*>(&block_metadata), sizeof(block_metadata), offset);
 
     return block_metadata;
 }
@@ -179,7 +164,20 @@ BlockMetadata StorageEngine::get_block_metadata(size_t block_id) {
 StorageEngine::StorageEngine(const std::filesystem::path& path): path(path), next_id(0) {
     storage_metadata = StorageMetadata(path);
     next_id = storage_metadata.block_count();
-};
+    // open all files for a kind of caching
+    for (int i = 0; i < NUMBER_OF_FILES; ++i) {
+        int fd = open(storage_metadata.filenames[i].c_str(), O_RDWR);
+        fd_cache.emplace_back(fd);
+    }
+    block_metadata_fd = open(storage_metadata.get_block_metadata().c_str(), O_RDWR);
+}
+
+StorageEngine::~StorageEngine() {
+    for (int i = 0; i < NUMBER_OF_FILES; ++i) {
+        close(fd_cache[i]);
+    }
+    close(block_metadata_fd);
+}
 
 StorageEngine::BlockId StorageEngine::create_block(StorageEngine::IdSelectionMode mode) {
     size_t file_id;
@@ -195,7 +193,7 @@ StorageEngine::BlockId StorageEngine::create_block(StorageEngine::IdSelectionMod
 
     std::filesystem::resize_file(storage_metadata.filenames[file_id], offset + BLOCK_SIZE);
 
-    int res = block_metadata.sync(storage_metadata.block_metadata_path, next_id);
+    int res = block_metadata.sync(block_metadata_fd, next_id);
     if (res == 0) {
         storage_metadata.block_count_per_file[file_id] += 1;
         storage_metadata.sync(path);
@@ -206,17 +204,16 @@ StorageEngine::BlockId StorageEngine::create_block(StorageEngine::IdSelectionMod
 }
 
 BlockReader StorageEngine::get_block(StorageEngine::BlockId block_id) {
+    int fd = get_block_file_fd(block_id);
     BlockMetadata block_metadata = get_block_metadata(block_id);
-    return { storage_metadata.filenames[block_metadata.file_id],
-            static_cast<size_t>(block_metadata.offset) };
+    return { fd, static_cast<size_t>(block_metadata.offset) };
 
 }
 int StorageEngine::write(char* buffer, StorageEngine::BlockId block_id) {
     BlockMetadata block_metadata = get_block_metadata(block_id);
 
-    int fd = open(storage_metadata.filenames[block_metadata.file_id].c_str(), O_WRONLY);
+    int fd = get_block_file_fd(block_id);
     pwrite(fd, buffer, BLOCK_SIZE, block_metadata.offset);
-    close(fd);
 
     return 0;
 }
@@ -291,4 +288,9 @@ int StorageEngine::execute_query(const std::vector<StorageEngine::BlockId>& col_
         }
     }
     return sum;
+}
+
+int StorageEngine::get_block_file_fd(BlockId block_id) {
+    BlockMetadata block_metadata = get_block_metadata(block_id);
+    return fd_cache[block_metadata.file_id];
 }

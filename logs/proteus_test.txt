@@ -1,0 +1,23 @@
+unit-context-tests: OK
+unit-csv-test: OK
+unit-expressions-tests: NOT OK (ExpressionsTestContext and 0-4-byte object - OK, ParallelMatrixMultiplication - exception, ExpressionsTestParallelContext interrupted by SIGSEGV)
+unit-json-test: OK (4 of 8 tests ignored)
+unit-memallocator-test: OK
+unit-operator-tests: NOT OK (JoinLeft3 stopped with SIGILL, others passed)
+unit-parallel-context-tests: OK
+unit-pipeline-tests: OK
+unit-platform-utils-test: OK
+unit-queue-test: OK
+unit-request-interface-test: OK
+unit-tests-cow: OK
+unit-tests-cpu-ssb: NOT OK (26 of 26 failed)
+unit-tests-gpu-ssb: NOT OK (26 of 26 ignored)
+unit-tests-hyb-ssb: NOT OK (13 of 13 ignored)
+unit-tests-index-art: NOT OK (UINT8_InsertAndFind passed, others not started)
+unit-tests-oltp-storage: NOT OK (2 of 2 failed)
+unit-tests-output: OK
+unit-tests-plan-parsing: NOT OK (Unnest failed)
+unit-tests-storage: NOT OK (1 of 1 failed)
+unit-tests-threads: OK
+unit-tests-worker-policy: OK
+
