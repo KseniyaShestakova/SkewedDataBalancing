@@ -12,7 +12,8 @@
 
 
 static const size_t NUMBER_OF_FILES = 10; // TODO: make more flexible
-static const long BLOCK_SIZE = 16;
+static const long BLOCK_SIZE = 512;
+static_assert(!(BLOCK_SIZE % 512));
 static const long BLOCK_VALUE_COUNT = BLOCK_SIZE / sizeof(int);
 
 class StorageEngine;
@@ -53,12 +54,11 @@ class StorageMetadata {
 };
 
 class alignas(512) BlockReader {
-    char* buffer;
+    char buffer[BLOCK_SIZE];
     absl::Status status;
   public:
     BlockReader(int fd, size_t offset);
     BlockReader(const BlockReader&);
-    ~BlockReader();
 
     bool is_ok();
     absl::Status get_status();

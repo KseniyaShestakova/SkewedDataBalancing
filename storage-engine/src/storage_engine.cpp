@@ -7,6 +7,14 @@ void create_or_truncate(const std::string& filename) {
     close(fd);
 }
 
+struct alignas(512) WriteBuffer {
+    char buffer[BLOCK_SIZE];
+
+    char* get_buffer() {
+        return buffer;
+    }
+};
+
 BlockMetadata::BlockMetadata() : file_id(-1),offset(-1) {}
 BlockMetadata::BlockMetadata(size_t file_id, long offset) : file_id(file_id), offset(offset) {}
 
@@ -124,19 +132,13 @@ std::ostream & operator<<(std::ostream& os, const StorageMetadata& metadata) {
 
 
 BlockReader::BlockReader(int fd, size_t offset) {
-    buffer = new char[BLOCK_SIZE];
     size_t bytes_read = pread(fd, buffer, BLOCK_SIZE, offset);
     status = (bytes_read == BLOCK_SIZE) ? absl::OkStatus() :
                                         absl::UnknownError("BlockReader::BlockReader error: number of read bytes is less than expected");
 }
 
 BlockReader::BlockReader(const BlockReader& other) {
-    buffer = new char[BLOCK_SIZE];
     memcpy(buffer, other.buffer, BLOCK_SIZE);
-}
-
-BlockReader::~BlockReader() {
-    delete[] buffer;
 }
 
 bool BlockReader::is_ok() {
@@ -184,7 +186,7 @@ StorageEngine::StorageEngine(const std::filesystem::path& path): path(path), nex
     next_id = storage_metadata.block_count();
     // open all files for a kind of caching
     for (int i = 0; i < NUMBER_OF_FILES; ++i) {
-        int fd = open(storage_metadata.filenames[i].c_str(), O_RDWR);
+        int fd = open(storage_metadata.filenames[i].c_str(), O_RDWR | O_DIRECT);
         fd_cache.emplace_back(fd);
     }
     block_metadata_fd = open(storage_metadata.get_block_metadata().c_str(), O_RDWR);
@@ -242,7 +244,11 @@ absl::Status StorageEngine::write(char* buffer, StorageEngine::BlockId block_id)
 
     int fd = get_block_file_fd(block_id);
     if (fd == -1) return absl::UnavailableError("StorageEngine::write error: Invalid file descriptor");
-    size_t bytes_written = pwrite(fd, buffer, BLOCK_SIZE, block_metadata.offset);
+    WriteBuffer write_buffer;
+
+    memcpy(write_buffer.get_buffer(), buffer, BLOCK_SIZE);
+    size_t bytes_written = pwrite(fd, write_buffer.get_buffer(), BLOCK_SIZE, block_metadata.offset);
+
     if (bytes_written != BLOCK_SIZE)
         return absl::UnknownError("StorageEngine::write error: number of written bytes is less than expected");
 

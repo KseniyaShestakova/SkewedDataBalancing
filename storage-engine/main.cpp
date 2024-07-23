@@ -18,19 +18,29 @@ absl::StatusOr<int> foo(int a) {
     }
 }
 
-int main() {
-    auto res = foo(-1);
+struct alignas(512) WriteBuffer {
+    char buffer[BLOCK_SIZE];
 
-    if (res.ok()) {
-        std::cout << *res << std::endl;
-    } else {
-        auto status = res.status().message();
-        std::cout << "Got error: " << status << std::endl;
-        if (absl::IsInvalidArgument(res.status())) {
-            std::cout << "it's invalid argument\n";
-        }
-        if (!absl::IsAborted(res.status())) {
-            std::cout << "it's not aborted\n";
-        }
+    char* get_buffer() {
+        return buffer;
     }
+};
+
+int main() {
+    std::string filename = "/home/xxeniash/SkewedDataBalancing/storage-engine/data/tmp";
+    int fd = open(filename.c_str(), O_RDWR | O_TRUNC | O_CREAT | O_DIRECT, 0666);
+    WriteBuffer write_buffer;
+    char* buffer = write_buffer.get_buffer();
+    std::cout << (size_t)&buffer % 512 << '\n';
+    memset(buffer, 'a', BLOCK_SIZE);
+    size_t bytes_written = pwrite(fd, buffer, BLOCK_SIZE, 0);
+    std::cout << bytes_written << '\n';
+    std::cout << strerror(errno) << '\n';
+    memset(buffer, 'b', BLOCK_SIZE);
+    std::cout << buffer << '\n';
+    size_t bytes_read = pread(fd, buffer, BLOCK_SIZE, 0);
+    std::cout << bytes_read << '\n';
+    std::cout << strerror(errno) << '\n';
+    std::cout << buffer << '\n';
+
 }
