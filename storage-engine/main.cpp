@@ -8,6 +8,7 @@
 #include <string.h>
 #include "absl/status/statusor.h"
 #include "absl/status/status.h"
+#include <data_generator.h>
 
 
 absl::StatusOr<int> foo(int a) {
@@ -18,16 +19,10 @@ absl::StatusOr<int> foo(int a) {
     }
 }
 
-struct alignas(512) WriteBuffer {
-    char buffer[BLOCK_SIZE];
 
-    char* get_buffer() {
-        return buffer;
-    }
-};
 
 int main() {
-    std::string filename = "/home/xxeniash/SkewedDataBalancing/storage-engine/data/tmp";
+    /*std::string filename = "/home/xxeniash/SkewedDataBalancing/storage-engine/data/tmp";
     int fd = open(filename.c_str(), O_RDWR | O_TRUNC | O_CREAT | O_DIRECT, 0666);
     WriteBuffer write_buffer;
     char* buffer = write_buffer.get_buffer();
@@ -41,6 +36,9 @@ int main() {
     size_t bytes_read = pread(fd, buffer, BLOCK_SIZE, 0);
     std::cout << bytes_read << '\n';
     std::cout << strerror(errno) << '\n';
-    std::cout << buffer << '\n';
+    std::cout << buffer << '\n';*/
+    float a = 5.0;
+    float b = std::round(5.7);
+    std::cout << static_cast<int>(b) << '\n';
 
 }

@@ -1,34 +1,31 @@
-#include <iostream>
-#include <fstream>
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cstddef>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
-#include <filesystem>
-#include <fcntl.h>
-#include <unistd.h>
-#include <unordered_map>
-#include "absl/status/statusor.h"
+
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 
-
-static const size_t NUMBER_OF_FILES = 10; // TODO: make more flexible
-static const long BLOCK_SIZE = 512;
-static_assert(!(BLOCK_SIZE % 512));
-static const long BLOCK_VALUE_COUNT = BLOCK_SIZE / sizeof(int);
+constexpr size_t kNumberOfFiles = 10;  // TODO: make more flexible
+constexpr long kBlockSize = 512;
+static_assert(!(kBlockSize % 512));
+constexpr long kBlockValueCount = kBlockSize / sizeof(int);
 
 class StorageEngine;
 
-
 struct BlockMetadata {
-    size_t file_id;
-    long offset;
+    short file_id; // 2 bytes
+    long offset; // type chosen so that it is consistent with offset argument of pread/pwrite
 
     BlockMetadata();
-    BlockMetadata(size_t file_id, long offset);
+    BlockMetadata(short file_id, long offset);
 
-    absl::Status sync(int fd, size_t block_id);
+    absl::Status sync(int fd, size_t block_id) const;
 };
-
 
 class StorageMetadata {
     std::filesystem::path block_metadata_path;
@@ -39,81 +36,84 @@ class StorageMetadata {
     void read_existing_metadata(const std::filesystem::path& path);
     void create_new_storage(const std::filesystem::path& path);
     void create_files(const std::filesystem::path& path);
+
   public:
     StorageMetadata();
     explicit StorageMetadata(const std::filesystem::path& path);
 
-    absl::Status sync(const std::filesystem::path& path);
-    size_t block_count();
-    std::filesystem::path get_block_metadata();
-    std::vector<std::string> get_filenames();
-    std::vector<size_t> get_block_count_per_file();
+    absl::Status sync(const std::filesystem::path& path) const;
+    size_t block_count() const;
+    std::filesystem::path get_block_metadata() const;
+    std::vector<std::string> get_filenames() const;
+    std::vector<size_t> get_block_count_per_file() const;
 
-    friend std::ostream & operator<<( std::ostream&, const StorageMetadata&);
+    friend std::ostream& operator<<(std::ostream&, const StorageMetadata&);
     friend StorageEngine;
 };
 
-class alignas(512) BlockReader {
-    char buffer[BLOCK_SIZE];
+class BlockReader {
+    char* buffer;
     absl::Status status;
+
   public:
-    BlockReader(int fd, size_t offset);
+    BlockReader(int fd, long offset);
     BlockReader(const BlockReader&);
+    ~BlockReader();
 
-    bool is_ok();
-    absl::Status get_status();
+    bool is_ok() const;
+    absl::Status get_status() const;
 
-    int read_int(size_t num);
-    int read_char(size_t num);
+    int read_int(size_t num) const;
+    int read_char(size_t num) const;
 
-    std::string get_content();
+    std::string get_content() const;
 };
 
-class
-    StorageEngine {
+class StorageEngine {
   public:
     using BlockId = size_t;
 
   private:
-    std::filesystem::path path;
+    const std::filesystem::path path;
     size_t next_id;
     StorageMetadata storage_metadata;
+    std::vector<BlockMetadata> block_metadata_cache;
 
     BlockId round_robin_file_selection() const;
     BlockId one_disk_selection() const;
 
-    BlockMetadata get_block_metadata(size_t block_id);
+    BlockMetadata get_block_metadata_from_file(size_t block_id) const;
+    BlockMetadata get_block_metadata(size_t block_id) const;
 
-    // we want to keep frequently accessed files opened in order to enhance performance
+
     std::vector<int> fd_cache;
     int block_metadata_fd;
 
-    int get_block_file_fd(BlockId);
+    int get_block_file_fd(BlockId) const;
 
   public:
-
     explicit StorageEngine(const std::filesystem::path& path);
 
     enum IdSelectionMode {
         RoundRobin,
         OneDisk,
     };
-    absl::StatusOr<BlockId> create_block(IdSelectionMode mode = IdSelectionMode::RoundRobin);
+    absl::StatusOr<BlockId> create_block(
+        IdSelectionMode mode = IdSelectionMode::RoundRobin);
 
-    absl::StatusOr<BlockReader> get_block(BlockId block_id);
+    absl::StatusOr<BlockReader> get_block(BlockId block_id) const;
 
     absl::Status write(char* buffer, BlockId block_id);
 
-    StorageMetadata get_metadata();
+    StorageMetadata get_metadata() const;
 
     absl::StatusOr<int> execute_query(const std::vector<BlockId>& col_a,
-                      const std::vector<BlockId>& col_b,
-                      int upper_bound);
+                                      const std::vector<BlockId>& col_b,
+                                      int upper_bound) const;
 
     ~StorageEngine();
 
-    friend std::ostream & operator<<( std::ostream&, const StorageEngine&);
+    friend std::ostream& operator<<(std::ostream&, const StorageEngine&);
 };
-
 
 void interpret_block_metadata_file(const std::filesystem::path& path);
