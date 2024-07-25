@@ -94,7 +94,9 @@ void random_query_test(size_t blocks_per_column) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
 
     for (int i = 0; i < blocks_per_column; ++i) {
         check_create_block(storage_engine, i);
@@ -125,7 +127,9 @@ TEST(StorageMetadata, NewStorage) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageMetadata storage_metadata(path);
+    auto create_res = StorageMetadata::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageMetadata storage_metadata = create_res.value();
 
     std::vector<std::filesystem::path> filenames;
     for (int i = 1; i <= kNumberOfFiles; ++i) {
@@ -151,7 +155,9 @@ TEST(StorageMetadata, ExistingStorage) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageMetadata new_storage(path);
+    auto create_res = StorageMetadata::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageMetadata new_storage = create_res.value();
 
     std::vector<std::filesystem::path> filenames;
     for (int i = 1; i <= kNumberOfFiles; ++i) {
@@ -160,7 +166,10 @@ TEST(StorageMetadata, ExistingStorage) {
     std::filesystem::path block_metadata =
         path.generic_string() + "_block_metadata";
 
-    StorageMetadata storage_metadata(path);
+    create_res = StorageMetadata::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageMetadata storage_metadata = create_res.value();
+
     ASSERT_EQ(0, storage_metadata.block_count());
     ASSERT_EQ(block_metadata, storage_metadata.get_block_metadata());
     for (int i = 0; i < kNumberOfFiles; ++i) {
@@ -173,7 +182,9 @@ TEST(StorageEngine, NewStorage) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
 
     std::vector<std::filesystem::path> filenames;
     for (int i = 1; i <= kNumberOfFiles; ++i) {
@@ -200,12 +211,15 @@ TEST(StorageEngine, CreateBlockRoundRobin) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
+
     auto filenames = storage_engine.get_metadata().get_filenames();
     auto block_metadata_path = storage_engine.get_metadata().get_block_metadata();
 
     ASSERT_EQ(filenames.size(), kNumberOfFiles);
-    for (int i = 0; i < 1; ++i) {
+    for (int i = 0; i < kNumberOfFiles; ++i) {
         ASSERT_EQ(filenames[i],
                   path.generic_string() + "_nvme" + std::to_string(i + 1));
     }
@@ -246,7 +260,10 @@ TEST(StorageEngine, CreateBlockOneDisk) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
+
     auto filenames = storage_engine.get_metadata().get_filenames();
     auto block_metadata_path = storage_engine.get_metadata().get_block_metadata();
 
@@ -272,7 +289,9 @@ TEST(StorageEngine, ReadWrite) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
 
     const size_t kBlockCount = 20;
     for (int i = 0; i < kBlockCount; ++i) {
@@ -303,7 +322,9 @@ TEST(StorageEngine, ReadWriteInt) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
 
     check_create_block(storage_engine, 0);
 
@@ -329,7 +350,9 @@ TEST(ExecuteQuery, OneBlockTestAllPass) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
 
     auto a_create_res = storage_engine.create_block();
     auto b_create_res = storage_engine.create_block();
@@ -365,7 +388,9 @@ TEST(ExecuteQuery, OneBlockTestNonePass) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
 
     auto a_create_res = storage_engine.create_block();
     auto b_create_res = storage_engine.create_block();
@@ -399,7 +424,9 @@ TEST(ExecuteQuery, OneBlockTestHalfPass) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
-    StorageEngine storage_engine(path);
+    auto create_res = StorageEngine::create(path);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
 
     auto a_create_res = storage_engine.create_block();
     auto b_create_res = storage_engine.create_block();

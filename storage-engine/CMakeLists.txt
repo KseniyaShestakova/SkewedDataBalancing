@@ -22,13 +22,17 @@ add_subdirectory(abseil-cpp)
 add_executable(${PROJECT_NAME}
         main.cpp
         src/storage_engine.cpp
-        src/data_generator.cpp
 )
 
 add_executable(
         tests
         src/storage_engine.cpp
         tests/test.cpp
+)
+
+add_executable(
+        generate_dataset
+        generate_dataset.cpp
 )
 
 target_link_libraries(
