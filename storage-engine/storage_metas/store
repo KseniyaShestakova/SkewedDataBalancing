@@ -1,3 +1,4 @@
-10
+6
 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_block_metadata
-/home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme1 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme2 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme3 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme4 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme5 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme6 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme7 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme8 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme9 /home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/store_nvme10 
+/home/xxeniash/SkewedDataBalancing/storage-engine/data/nvme1/store /home/xxeniash/SkewedDataBalancing/storage-engine/data/nvme2/store /home/xxeniash/SkewedDataBalancing/storage-engine/data/nvme3/store /home/xxeniash/SkewedDataBalancing/storage-engine/data/nvme4/store /home/xxeniash/SkewedDataBalancing/storage-engine/data/nvme5/store /home/xxeniash/SkewedDataBalancing/storage-engine/data/nvme6/store 
+1 0 0 0 0 0 

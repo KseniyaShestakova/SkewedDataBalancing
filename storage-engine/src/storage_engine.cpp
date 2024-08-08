@@ -1,11 +1,15 @@
 #include <storage_engine.h>
 #include <string.h>
 
+#include <cassert>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <string>
+#include <vector>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -19,11 +23,12 @@ absl::Status create_or_truncate(const std::string& filename) {
     return absl::OkStatus();
 }
 
-struct alignas(512) WriteBuffer {
+struct WriteBuffer {
+    const size_t block_size;
     char* buffer;
 
-    WriteBuffer() {
-        buffer = reinterpret_cast<char*>(aligned_alloc(512, kBlockSize));
+    WriteBuffer(size_t block_size) : block_size(block_size) {
+        buffer = reinterpret_cast<char*>(aligned_alloc(512, block_size));
     }
 
     ~WriteBuffer() { free(buffer); }
@@ -55,6 +60,7 @@ StorageMetadata::StorageMetadata()
 
 absl::StatusOr<StorageMetadata> StorageMetadata::read_existing_metadata(
     const std::filesystem::path& path) {
+    const std::string meta_path = storage_metas_path + path.generic_string();
     // we only call this from the constructors, so it's fine to use fstream here
     std::filesystem::path block_metadata_path;
     std::vector<std::string> filenames;
@@ -62,7 +68,7 @@ absl::StatusOr<StorageMetadata> StorageMetadata::read_existing_metadata(
     size_t number_of_files;
 
     std::ifstream in;
-    in.open(path);
+    in.open(meta_path);
     if (in.fail()) {
         return absl::UnavailableError(
             "StorageMetada::read_existing_metadata error: ifstream open failed");
@@ -108,7 +114,7 @@ absl::StatusOr<StorageMetadata> StorageMetadata::read_existing_metadata(
 absl::StatusOr<StorageMetadata> StorageMetadata::create_new_storage(
     const std::filesystem::path& path) {
     std::filesystem::path block_metadata_path =
-        path.generic_string() + "_block_metadata";
+        storage_metas_path + path.generic_string() + "_block_metadata";
     size_t number_of_files = kNumberOfFiles;
     std::vector<std::string> filenames(number_of_files, "");
     std::vector<size_t> block_count_per_file(number_of_files, 0);
@@ -149,25 +155,26 @@ absl::StatusOr<StorageMetadata> StorageMetadata::create(
 absl::Status StorageMetadata::create_files(
     const std::filesystem::path& path, std::vector<std::string>& filenames) {
     size_t number_of_files = filenames.size();
-    for (int i = 1; i <= number_of_files; ++i) {
-        std::string filename = path.generic_string() + "_nvme" + std::to_string(i);
+    for (int i = 0; i < number_of_files; ++i) {
+        std::string filename = disk_pathes[i] + path.generic_string();
         auto res = create_or_truncate(filename);
         if (!res.ok()) {
             return res;
         }
 
-        filenames[i - 1] = filename;
+        filenames[i] = filename;
     }
     return absl::OkStatus();
 }
 
 absl::Status StorageMetadata::sync(const std::filesystem::path& path) const {
-    auto res = create_or_truncate(path.generic_string());
+    const std::string meta_path = storage_metas_path + path.generic_string();
+    auto res = create_or_truncate(meta_path);
     if (!res.ok()) {
         return res;
     }
 
-    int fd = open(path.generic_string().c_str(), O_WRONLY);
+    int fd = open(meta_path.c_str(), O_WRONLY);
     std::string output_string = std::to_string(number_of_files) + "\n";
     output_string += block_metadata_path.generic_string() + "\n";
 
@@ -214,25 +221,29 @@ std::ostream& operator<<(std::ostream& os, const StorageMetadata& metadata) {
     return os;
 }
 
-BlockReader::BlockReader(int fd, long offset) {
-    buffer = reinterpret_cast<char*>(aligned_alloc(512, kBlockSize));
-    const size_t bytes_read = pread(fd, buffer, kBlockSize, offset);
-    status = (bytes_read == kBlockSize)
+BlockReader::BlockReader(int fd, size_t block_size, long offset)
+    : block_size(block_size) {
+    buffer = reinterpret_cast<char*>(aligned_alloc(512, block_size));
+    const size_t bytes_read = pread(fd, buffer, block_size, offset);
+    status = (bytes_read == block_size)
                  ? absl::OkStatus()
                  : absl::UnknownError(
                        "BlockReader::BlockReader error: number of read bytes is "
                        "less than expected");
 }
 
-BlockReader::BlockReader(const BlockReader& other) {
-    buffer = reinterpret_cast<char*>(aligned_alloc(512, kBlockSize));
-    memcpy(buffer, other.buffer, kBlockSize);
+BlockReader::BlockReader(const BlockReader& other)
+    : block_size(other.block_size) {
+    buffer = reinterpret_cast<char*>(aligned_alloc(512, block_size));
+    memcpy(buffer, other.buffer, block_size);
 }
 
 BlockReader& BlockReader::operator=(const BlockReader& other) {
+    assert(block_size == other.block_size &&
+           "can't change BlockReader block size");
     if (this != &other) {
-        buffer = reinterpret_cast<char*>(aligned_alloc(512, kBlockSize));
-        memcpy(buffer, other.buffer, kBlockSize);
+        buffer = reinterpret_cast<char*>(aligned_alloc(512, block_size));
+        memcpy(buffer, other.buffer, block_size);
     }
     return *this;
 }
@@ -253,7 +264,7 @@ int BlockReader::read_char(size_t num) const { return buffer[num]; }
 std::string BlockReader::get_content()
     const {  // this function is mostly needed for testing
     std::string str(buffer);
-    str.resize(kBlockSize);
+    str.resize(block_size);
     return str;
 }
 
@@ -263,6 +274,10 @@ StorageEngine::BlockId StorageEngine::round_robin_file_selection() const {
 
 StorageEngine::BlockId StorageEngine::one_disk_selection() const { return 0; }
 
+StorageEngine::BlockId StorageEngine::modulo6_selection() const {
+    return (next_id / 6) % storage_metadata.number_of_files;
+}
+
 absl::StatusOr<BlockMetadata> StorageEngine::get_block_metadata_from_file(
     size_t block_id, int fd) {
     BlockMetadata block_metadata;
@@ -270,7 +285,8 @@ absl::StatusOr<BlockMetadata> StorageEngine::get_block_metadata_from_file(
     size_t bytes_read = pread(fd, reinterpret_cast<void*>(&block_metadata),
                               sizeof(block_metadata), offset);
     if (bytes_read < sizeof(block_metadata)) {
-        return absl::UnavailableError("StorageEngine::get_block_metadata_from_file error: read failed");
+        return absl::UnavailableError(
+            "StorageEngine::get_block_metadata_from_file error: read failed");
     }
 
     return block_metadata;
@@ -280,24 +296,37 @@ BlockMetadata StorageEngine::get_block_metadata(size_t block_id) const {
     return block_metadata_cache[block_id];
 }
 
-StorageEngine::StorageEngine(const std::filesystem::path& path,
-                             size_t next_id,
-                             const StorageMetadata& storage_metadata,
-                             const std::vector<BlockMetadata>& block_metadata_cache,
-                             const std::vector<int>& fd_cache,
-                             int block_metadata_fd) :
-      path(path), next_id(next_id), storage_metadata(storage_metadata),
+StorageEngine::StorageEngine(
+    StorageEngine::IdSelectionMode mode, size_t block_size,
+    const std::filesystem::path& path, size_t next_id,
+    const StorageMetadata& storage_metadata,
+    const std::vector<BlockMetadata>& block_metadata_cache,
+    const std::vector<int>& fd_cache, int block_metadata_fd)
+    : mode(mode),
+      block_size(block_size),
+      path(path),
+      next_id(next_id),
+      storage_metadata(storage_metadata),
       block_metadata_cache(block_metadata_cache),
-      fd_cache(fd_cache), block_metadata_fd(block_metadata_fd){}
+      fd_cache(fd_cache),
+      block_metadata_fd(block_metadata_fd) {}
 
-StorageEngine::StorageEngine(const std::filesystem::path& path,
-                             size_t next_id,
-                             const StorageMetadata& storage_metadata) :
-      path(path), next_id(next_id), storage_metadata(storage_metadata),
-      block_metadata_cache(), fd_cache(), block_metadata_fd() {}
+StorageEngine::StorageEngine(StorageEngine::IdSelectionMode mode,
+                             size_t block_size,
+                             const std::filesystem::path& path, size_t next_id,
+                             const StorageMetadata& storage_metadata)
+    : mode(mode),
+      block_size(block_size),
+      path(path),
+      next_id(next_id),
+      storage_metadata(storage_metadata),
+      block_metadata_cache(),
+      fd_cache(),
+      block_metadata_fd() {}
 
-StorageEngine::StorageEngine(const StorageEngine& other) :
-      StorageEngine(other.path, other.next_id, other.storage_metadata){
+StorageEngine::StorageEngine(const StorageEngine& other)
+    : StorageEngine(other.mode, other.block_size, other.path, other.next_id,
+                    other.storage_metadata) {
     auto res = open_caches();
     assert(res.ok());
 }
@@ -307,14 +336,16 @@ absl::Status StorageEngine::open_caches() {
     for (int i = 0; i < kNumberOfFiles; ++i) {
         int fd = open(storage_metadata.filenames[i].c_str(), O_RDWR | O_DIRECT);
         if (fd < 0) {
-            return absl::UnavailableError("StorageEngine::create error: opening block file failed");
+            return absl::UnavailableError(
+                "StorageEngine::create error: opening block file failed");
         }
         fd_cache.emplace_back(fd);
     }
     block_metadata_fd =
         open(storage_metadata.get_block_metadata().c_str(), O_RDWR);
     if (block_metadata_fd < 0) {
-        return absl::UnavailableError("StorageEngine::create error: opening block metadata file failed");
+        return absl::UnavailableError(
+            "StorageEngine::create error: opening block metadata file failed");
     }
     auto block_count = storage_metadata.block_count();
     block_metadata_cache.resize(0);
@@ -328,8 +359,9 @@ absl::Status StorageEngine::open_caches() {
     return absl::OkStatus();
 }
 
-absl::StatusOr<StorageEngine> StorageEngine::create(const std::filesystem::path& path)
-{
+absl::StatusOr<StorageEngine> StorageEngine::create(
+    const std::filesystem::path& path, StorageEngine::IdSelectionMode mode,
+    size_t block_size) {
     size_t next_id = 0;
     auto create_res = StorageMetadata::create(path);
     if (!create_res.ok()) {
@@ -339,7 +371,8 @@ absl::StatusOr<StorageEngine> StorageEngine::create(const std::filesystem::path&
     StorageMetadata storage_metadata = StorageMetadata::create(path).value();
     next_id = storage_metadata.block_count();
 
-    StorageEngine storage_engine = StorageEngine(path, next_id, storage_metadata);
+    StorageEngine storage_engine =
+        StorageEngine(mode, block_size, path, next_id, storage_metadata);
     auto res = storage_engine.open_caches();
     if (!res.ok()) return res;
     return storage_engine;
@@ -352,8 +385,7 @@ StorageEngine::~StorageEngine() {
     close(block_metadata_fd);
 }
 
-absl::StatusOr<StorageEngine::BlockId> StorageEngine::create_block(
-    StorageEngine::IdSelectionMode mode) {
+absl::StatusOr<StorageEngine::BlockId> StorageEngine::create_block() {
     size_t file_id;
     switch (mode) {
     case IdSelectionMode::RoundRobin:
@@ -362,16 +394,19 @@ absl::StatusOr<StorageEngine::BlockId> StorageEngine::create_block(
     case IdSelectionMode::OneDisk:
         file_id = one_disk_selection();
         break;
+    case IdSelectionMode::Modulo6:
+        file_id = modulo6_selection();
+        break;
     default:
         file_id = round_robin_file_selection();
     }
 
     const size_t offset =
-        storage_metadata.block_count_per_file[file_id] * kBlockSize;
+        storage_metadata.block_count_per_file[file_id] * block_size;
     const BlockMetadata block_metadata = BlockMetadata(file_id, offset);
 
     std::filesystem::resize_file(storage_metadata.filenames[file_id],
-                                 offset + kBlockSize);
+                                 offset + block_size);
 
     auto res = block_metadata.sync(block_metadata_fd, next_id);
     if (!res.ok()) return res;
@@ -391,7 +426,7 @@ absl::StatusOr<BlockReader> StorageEngine::get_block(
             "StorageEngine::get_block error: invalid file descriptor");
     }
     const BlockMetadata block_metadata = get_block_metadata(block_id);
-    auto block_reader = BlockReader(fd, block_metadata.offset);
+    auto block_reader = BlockReader(fd, block_size, block_metadata.offset);
     if (!block_reader.is_ok()) {
         return block_reader.get_status();
     }
@@ -407,12 +442,12 @@ absl::Status StorageEngine::write(char* buffer,
         return absl::UnavailableError(
             "StorageEngine::write error: Invalid file descriptor");
 
-    WriteBuffer write_buffer;
-    memcpy(write_buffer.get_buffer(), buffer, kBlockSize);
+    WriteBuffer write_buffer(block_size);
+    memcpy(write_buffer.get_buffer(), buffer, block_size);
     const size_t bytes_written =
-        pwrite(fd, write_buffer.get_buffer(), kBlockSize, block_metadata.offset);
+        pwrite(fd, write_buffer.get_buffer(), block_size, block_metadata.offset);
 
-    if (bytes_written != kBlockSize)
+    if (bytes_written != block_size)
         return absl::UnknownError(
             "StorageEngine::write error: number of written bytes is less than "
             "expected");
@@ -451,6 +486,8 @@ StorageMetadata StorageEngine::get_metadata() const {
     return this->storage_metadata;
 }
 
+size_t StorageEngine::get_block_size() const { return this->block_size; }
+
 std::filesystem::path StorageMetadata::get_block_metadata() const {
     return this->block_metadata_path;
 }
@@ -463,42 +500,7 @@ std::vector<size_t> StorageMetadata::get_block_count_per_file() const {
     return this->block_count_per_file;
 }
 
-absl::StatusOr<int> StorageEngine::execute_query(
-    const std::vector<StorageEngine::BlockId>& col_a,
-    const std::vector<StorageEngine::BlockId>& col_b, int upper_bound) const {
-    std::vector<bool> block_mask;
-    int sum = 0;
-
-    for (int t = 0; t < col_a.size(); ++t) {
-        const BlockId col_a_block_id = col_a[t];
-        const BlockId col_b_block_id = col_b[t];
-
-        const auto get_block_a_res = get_block(col_a_block_id);
-        if (!get_block_a_res.ok()) return get_block_a_res.status();
-        const auto& col_a_block_reader = *get_block_a_res;
-        block_mask.assign(kBlockValueCount, false);
-
-        bool at_least_one_true = false;
-        for (int i = 0; i < kBlockValueCount; ++i) {
-            block_mask[i] = (col_a_block_reader.read_int(i) < upper_bound);
-            at_least_one_true |= block_mask[i];
-        }
-        if (at_least_one_true) {
-            const auto get_block_b_res = get_block(col_b_block_id);
-            if (!get_block_b_res.ok()) return get_block_b_res.status();
-            const auto& col_b_block_reader = *get_block_b_res;
-
-            for (int i = 0; i < kBlockValueCount; ++i) {
-                sum += block_mask[i] * col_b_block_reader.read_int(i);
-            }
-        }
-    }
-    return sum;
-}
-
 int StorageEngine::get_block_file_fd(BlockId block_id) const {
     BlockMetadata block_metadata = get_block_metadata(block_id);
     return fd_cache[block_metadata.file_id];
 }
-
-std::vector<float> generate_dataset_float_1(int n);

@@ -1,10 +1,12 @@
 #include <data_generator.h>
-#include <iostream>
+
+#include <cstddef>
+#include <cstdlib>
 #include <fstream>
 
-std::vector<std::normal_distribution<float>> MixOfNormalDistributions::make_distributions(
-    const std::vector<float>& means,
-    const std::vector<float>& variances) {
+std::vector<std::normal_distribution<float>>
+MixOfNormalDistributions::make_distributions(
+    const std::vector<float>& means, const std::vector<float>& variances) {
     std::vector<std::normal_distribution<float>> distributions;
     for (size_t i = 0; i < means.size(); ++i) {
         distributions.emplace_back(means[i], variances[i]);
@@ -12,25 +14,25 @@ std::vector<std::normal_distribution<float>> MixOfNormalDistributions::make_dist
     return distributions;
 }
 
-MixOfNormalDistributions::MixOfNormalDistributions(const std::vector<float>& means,
-                                                   const std::vector<float>& variances):
-      distributions(make_distributions(means, variances)),
+MixOfNormalDistributions::MixOfNormalDistributions(
+    const std::vector<float>& means, const std::vector<float>& variances)
+    : distributions(make_distributions(means, variances)),
       number_of_distributions(distributions.size()),
       next_distribution(0),
-      rd(), gen(rd()){}
+      gen(42) {}  // fix seed for making the results reproducible
 
 void MixOfNormalDistributions::change_distribution() {
     next_distribution++;
     next_distribution %= number_of_distributions;
 }
 
-template<>
-float MixOfNormalDistributions::rand<float>(){
+template <>
+float MixOfNormalDistributions::rand<float>() {
     return distributions[next_distribution](gen);
 }
 
-template<>
-int MixOfNormalDistributions::rand<int>(){
+template <>
+int MixOfNormalDistributions::rand<int>() {
     return static_cast<int>(std::round(distributions[next_distribution](gen)));
 }
 
@@ -47,21 +49,18 @@ std::vector<T> MixOfNormalDistributions::generate_vector(size_t size) {
 }
 
 template <typename T>
-std::vector<std::vector<T>> MixOfNormalDistributions::generate_blocks(size_t block_count, size_t block_size) {
-    std::vector<std::vector<T>> result;
-    result.reserve(block_count);
-
-
+T** MixOfNormalDistributions::generate_blocks(const size_t block_count,
+                                              const size_t block_size) {
+    const size_t block_value_count = block_size / sizeof(T);
+    T** blocks = new T*[block_count];
     for (size_t i = 0; i < block_count; ++i) {
-        result.emplace_back();
-        result.back().reserve(block_size);
-        for (size_t j = 0; j < block_size; ++j) {
-            result.back().emplace_back(rand<T>());
+        blocks[i] = reinterpret_cast<T*>(aligned_alloc(512, block_size));
+        for (size_t j = 0; j < block_value_count; ++j) {
+            blocks[i][j] = rand<T>();
         }
-        change_distribution(); // all items in one block are from the same distribution
+        change_distribution();
     }
-
-    return result;
+    return blocks;
 }
 
 template <typename T>
@@ -83,14 +82,8 @@ void generate_dataset1(const std::string& path, int n) {
     std::ofstream out;
     out.open(path);
 
-    for (auto item: vector) {
+    for (auto item : vector) {
         out << item << " ";
-        //std::cout << item << " ";
     }
     out.close();
-}
-
-template <typename T>
-void foo() {
-    std::cout << "foo\n";
 }
