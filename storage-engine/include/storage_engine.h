@@ -40,6 +40,7 @@ static const size_t kNumberOfFiles = disk_pathes_round_robin.size();
 static const std::string storage_metas_path =
     "/home/xxeniash/SkewedDataBalancing/storage-engine/storage_metas/";
 
+
 class StorageEngine;
 
 struct BlockMetadata {
@@ -104,7 +105,7 @@ class BlockReader {
 class StorageEngine {
   public:
     using BlockId = size_t;
-    enum IdSelectionMode { RoundRobin, OneDisk, Modulo6 };
+    enum IdSelectionMode { RoundRobin, OneDisk, BatchedRoundRobin, Shift6 };
 
   private:
     const IdSelectionMode mode;
@@ -115,10 +116,12 @@ class StorageEngine {
     std::vector<BlockMetadata> block_metadata_cache;
     std::vector<int> fd_cache;
     int block_metadata_fd;
+    size_t batch_size = -1;
 
     BlockId round_robin_file_selection() const;
     BlockId one_disk_selection() const;
-    BlockId modulo6_selection() const;
+    BlockId batched_round_robin_selection() const;
+    BlockId shift6_selection() const;
 
     static absl::StatusOr<BlockMetadata> get_block_metadata_from_file(
         size_t block_id, int fd);
@@ -128,14 +131,15 @@ class StorageEngine {
 
     StorageEngine(IdSelectionMode, size_t, const std::filesystem::path&, size_t,
                   const StorageMetadata&, const std::vector<BlockMetadata>&,
-                  const std::vector<int>&, int);
+                  const std::vector<int>&, int, size_t);
     StorageEngine(IdSelectionMode, size_t, const std::filesystem::path&, size_t,
-                  const StorageMetadata&);
+                  const StorageMetadata&, size_t);
     absl::Status open_caches();
 
   public:
-    static absl::StatusOr<StorageEngine> create(const std::filesystem::path& path,
-                                                IdSelectionMode, size_t);
+    static absl::StatusOr<StorageEngine> create(
+        const std::filesystem::path& path, StorageEngine::IdSelectionMode mode,
+        size_t block_size, size_t batch_size = -1);
     StorageEngine(const StorageEngine&);
     StorageEngine& operator=(const StorageEngine&) = delete;
     ~StorageEngine();
@@ -143,6 +147,7 @@ class StorageEngine {
     absl::StatusOr<BlockId> create_block();
 
     absl::StatusOr<BlockReader> get_block(BlockId block_id) const;
+    absl::Status counting_get_block(BlockId block_id, std::vector<size_t>&) const; // this is only needed profiling
 
     absl::Status write(char* buffer, BlockId block_id);
 

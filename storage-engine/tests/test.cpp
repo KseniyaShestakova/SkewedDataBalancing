@@ -295,19 +295,20 @@ TEST(StorageEngine, CreateBlockOneDisk) {
     ASSERT_EQ(kBlocksToCreate, storage_engine.get_metadata().block_count());
 }
 
-TEST(StorageEngine, CreateBlockModulo6) {
+void batched_test(const size_t batch_size) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
 
     auto create_res = StorageEngine::create(
-        path, StorageEngine::IdSelectionMode::Modulo6, kBlockSize);
+        path, StorageEngine::IdSelectionMode::BatchedRoundRobin, kBlockSize,
+        batch_size);
     ASSERT_EQ(create_res.ok(), true);
     StorageEngine storage_engine = create_res.value();
 
     auto filenames = storage_engine.get_metadata().get_filenames();
     auto block_metadata_path = storage_engine.get_metadata().get_block_metadata();
 
-    const size_t kBlocksToCreate = 6 * kNumberOfFiles;
+    const size_t kBlocksToCreate = batch_size * kNumberOfFiles;
 
     for (int i = 0; i < kBlocksToCreate; ++i) {
         check_create_block(storage_engine, i);
@@ -315,17 +316,17 @@ TEST(StorageEngine, CreateBlockModulo6) {
         ASSERT_EQ((i + 1) * sizeof(BlockMetadata),
                   std::filesystem::file_size(block_metadata_path));
 
-        size_t curr_file = (i / 6) % kNumberOfFiles;
-        ASSERT_EQ(((i % 6) + 1) * kBlockSize,
+        size_t curr_file = (i / batch_size) % kNumberOfFiles;
+        ASSERT_EQ(((i % batch_size) + 1) * kBlockSize,
                   std::filesystem::file_size(filenames[curr_file]));
         auto block_count_per_file =
             storage_engine.get_metadata().get_block_count_per_file();
         for (int j = 0; j < kNumberOfFiles; ++j) {
             if (j < curr_file) {
-                ASSERT_EQ(6, block_count_per_file[j]);
+                ASSERT_EQ(batch_size, block_count_per_file[j]);
             }
             if (j == curr_file) {
-                ASSERT_EQ(i % 6 + 1, block_count_per_file[j]);
+                ASSERT_EQ(i % batch_size + 1, block_count_per_file[j]);
             }
             if (j > curr_file) {
                 ASSERT_EQ(0, block_count_per_file[j]);
@@ -333,6 +334,15 @@ TEST(StorageEngine, CreateBlockModulo6) {
         }
     }
     ASSERT_EQ(kBlocksToCreate, storage_engine.get_metadata().block_count());
+}
+
+TEST(StorageEngine, CreateBlockBatched) {
+    batched_test(6);
+    batched_test(12);
+
+    for (size_t i = 1; i < 512; i <<= 1) {
+        batched_test(i);
+    }
 }
 
 TEST(StorageEngine, ReadWrite) {

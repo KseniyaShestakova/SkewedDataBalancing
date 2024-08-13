@@ -274,8 +274,12 @@ StorageEngine::BlockId StorageEngine::round_robin_file_selection() const {
 
 StorageEngine::BlockId StorageEngine::one_disk_selection() const { return 0; }
 
-StorageEngine::BlockId StorageEngine::modulo6_selection() const {
-    return (next_id / 6) % storage_metadata.number_of_files;
+StorageEngine::BlockId StorageEngine::batched_round_robin_selection() const {
+    return (next_id / batch_size) % storage_metadata.number_of_files;
+}
+
+StorageEngine::BlockId StorageEngine::shift6_selection() const {
+    return (next_id + next_id / kNumberOfFiles) % kNumberOfFiles;
 }
 
 absl::StatusOr<BlockMetadata> StorageEngine::get_block_metadata_from_file(
@@ -301,7 +305,8 @@ StorageEngine::StorageEngine(
     const std::filesystem::path& path, size_t next_id,
     const StorageMetadata& storage_metadata,
     const std::vector<BlockMetadata>& block_metadata_cache,
-    const std::vector<int>& fd_cache, int block_metadata_fd)
+    const std::vector<int>& fd_cache, int block_metadata_fd,
+    size_t batch_size = -1)
     : mode(mode),
       block_size(block_size),
       path(path),
@@ -309,12 +314,14 @@ StorageEngine::StorageEngine(
       storage_metadata(storage_metadata),
       block_metadata_cache(block_metadata_cache),
       fd_cache(fd_cache),
-      block_metadata_fd(block_metadata_fd) {}
+      block_metadata_fd(block_metadata_fd),
+      batch_size(batch_size) {}
 
 StorageEngine::StorageEngine(StorageEngine::IdSelectionMode mode,
                              size_t block_size,
                              const std::filesystem::path& path, size_t next_id,
-                             const StorageMetadata& storage_metadata)
+                             const StorageMetadata& storage_metadata,
+                             size_t batch_size = -1)
     : mode(mode),
       block_size(block_size),
       path(path),
@@ -322,11 +329,12 @@ StorageEngine::StorageEngine(StorageEngine::IdSelectionMode mode,
       storage_metadata(storage_metadata),
       block_metadata_cache(),
       fd_cache(),
-      block_metadata_fd() {}
+      block_metadata_fd(),
+      batch_size(batch_size) {}
 
 StorageEngine::StorageEngine(const StorageEngine& other)
     : StorageEngine(other.mode, other.block_size, other.path, other.next_id,
-                    other.storage_metadata) {
+                    other.storage_metadata, other.batch_size) {
     auto res = open_caches();
     assert(res.ok());
 }
@@ -361,7 +369,7 @@ absl::Status StorageEngine::open_caches() {
 
 absl::StatusOr<StorageEngine> StorageEngine::create(
     const std::filesystem::path& path, StorageEngine::IdSelectionMode mode,
-    size_t block_size) {
+    size_t block_size, size_t batch_size) {
     size_t next_id = 0;
     auto create_res = StorageMetadata::create(path);
     if (!create_res.ok()) {
@@ -371,8 +379,8 @@ absl::StatusOr<StorageEngine> StorageEngine::create(
     StorageMetadata storage_metadata = StorageMetadata::create(path).value();
     next_id = storage_metadata.block_count();
 
-    StorageEngine storage_engine =
-        StorageEngine(mode, block_size, path, next_id, storage_metadata);
+    StorageEngine storage_engine = StorageEngine(mode, block_size, path, next_id,
+                                                 storage_metadata, batch_size);
     auto res = storage_engine.open_caches();
     if (!res.ok()) return res;
     return storage_engine;
@@ -394,8 +402,11 @@ absl::StatusOr<StorageEngine::BlockId> StorageEngine::create_block() {
     case IdSelectionMode::OneDisk:
         file_id = one_disk_selection();
         break;
-    case IdSelectionMode::Modulo6:
-        file_id = modulo6_selection();
+    case IdSelectionMode::BatchedRoundRobin:
+        file_id = batched_round_robin_selection();
+        break;
+    case IdSelectionMode::Shift6:
+        file_id = shift6_selection();
         break;
     default:
         file_id = round_robin_file_selection();
@@ -431,6 +442,14 @@ absl::StatusOr<BlockReader> StorageEngine::get_block(
         return block_reader.get_status();
     }
     return block_reader;
+}
+
+absl::Status StorageEngine::counting_get_block(StorageEngine::BlockId block_id, std::vector<size_t>& cnt) const {
+    BlockMetadata block_metadata = get_block_metadata(block_id);
+    auto file_id = block_metadata.file_id;
+
+    cnt[file_id] += 1;
+    return absl::OkStatus();
 }
 
 absl::Status StorageEngine::write(char* buffer,

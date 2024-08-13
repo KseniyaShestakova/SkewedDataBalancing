@@ -35,6 +35,19 @@ add_executable(
         generate_dataset.cpp
 )
 
+add_executable(
+        storage-engine-pseudo-benchmarks
+        pseudo_benchmark.cpp
+        src/storage_engine.cpp
+        src/execute_query.cpp
+)
+
+target_link_libraries(
+        storage-engine-pseudo-benchmarks
+        absl::status
+        absl::statusor
+)
+
 target_link_libraries(
         tests
         GTest::gtest_main
