@@ -218,6 +218,7 @@ TEST(StorageEngine, NewStorage) {
     }
 }
 
+
 TEST(StorageEngine, CreateBlockRoundRobin) {
     std::filesystem::path path = kStoragePath;
     clean_storage(path);
@@ -354,11 +355,12 @@ TEST(StorageEngine, ReadWrite) {
     ASSERT_EQ(create_res.ok(), true);
     StorageEngine storage_engine = create_res.value();
 
+
     const size_t kBlockCount = 20;
     for (int i = 0; i < kBlockCount; ++i) {
         check_create_block(
             storage_engine,
-            i);  // make this assert to ensure that eveything is created as needed
+            i);  // make this assert to ensure that everything is created as needed
     }
     ASSERT_EQ(kBlockCount, storage_engine.get_metadata().block_count());
 
@@ -378,6 +380,73 @@ TEST(StorageEngine, ReadWrite) {
         ASSERT_EQ(str, contents[i]);
     }
 }
+
+TEST(StorageEngine, ExistingStorage) {
+    std::filesystem::path path = kStoragePath;
+    clean_storage(path);
+    const size_t block_size = kBlockSize;
+
+    auto create_res = StorageEngine::create(
+        path, StorageEngine::IdSelectionMode::RoundRobin, block_size);
+    ASSERT_EQ(create_res.ok(), true);
+    StorageEngine storage_engine = create_res.value();
+
+    const size_t kBlockCount = 20;
+    for (int i = 0; i < kBlockCount; ++i) {
+        check_create_block(
+            storage_engine,
+            i);  // make this assert to ensure that everything is created as needed
+    }
+    ASSERT_EQ(kBlockCount, storage_engine.get_metadata().block_count());
+
+    std::vector<std::string> contents;
+    generate_strings(contents, kBlockCount, kBlockSize);
+
+    for (int i = 0; i < kBlockCount; ++i) {
+        ASSERT_EQ(
+            true,
+            storage_engine.write(const_cast<char*>(contents[i].c_str()), i).ok());
+    }
+
+    for (int i = 0; i < kBlockCount; ++i) {
+        auto read_res = storage_engine.get_block(i);
+        ASSERT_EQ(read_res.ok(), true);
+        auto str = read_res->get_content();
+        ASSERT_EQ(str, contents[i]);
+    }
+
+    // fill storage_engine before going to storage_engine_2
+    auto create_res_2 = StorageEngine::create(
+        path, StorageEngine::IdSelectionMode::RoundRobin, block_size);
+    ASSERT_EQ(create_res_2.ok(), true);
+    StorageEngine storage_engine_2 = create_res_2.value();
+
+    std::vector<std::filesystem::path> filenames;
+    for (int i = 0; i < kNumberOfFiles; ++i) {
+        filenames.emplace_back(disk_pathes[i] + path.generic_string());
+    }
+    std::filesystem::path block_metadata =
+        storage_metas_path + path.generic_string() + "_block_metadata";
+
+
+    ASSERT_EQ(storage_engine_2.get_metadata().block_count(), storage_engine.get_metadata().block_count());
+    ASSERT_EQ(block_metadata, storage_engine.get_metadata().get_block_metadata());
+    ASSERT_EQ(block_metadata, storage_engine_2.get_metadata().get_block_metadata());
+    for (int i = 0; i < kNumberOfFiles; ++i) {
+        ASSERT_EQ(filenames[i], storage_engine.get_metadata().get_filenames()[i]);
+        ASSERT_EQ(filenames[i], storage_engine_2.get_metadata().get_filenames()[i]);
+        ASSERT_EQ(storage_engine_2.get_metadata().get_block_count_per_file()[i],
+                  storage_engine.get_metadata().get_block_count_per_file()[i]);
+    }
+
+    for (int i = 0; i < kBlockCount; ++i) {
+        auto read_res = storage_engine_2.get_block(i);
+        ASSERT_EQ(read_res.ok(), true);
+        auto str = read_res->get_content();
+        ASSERT_EQ(str, contents[i]);
+    }
+}
+
 
 TEST(StorageEngine, ReadWriteInt) {
     std::filesystem::path path = kStoragePath;

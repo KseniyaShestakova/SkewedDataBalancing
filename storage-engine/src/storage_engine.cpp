@@ -148,7 +148,7 @@ StorageMetadata::StorageMetadata(
 
 absl::StatusOr<StorageMetadata> StorageMetadata::create(
     const std::filesystem::path& path) {
-    return (std::filesystem::exists(path)) ? read_existing_metadata(path)
+    return (std::filesystem::exists(storage_metas_path + path.generic_string())) ? read_existing_metadata(path)
                                            : create_new_storage(path);
 }
 
@@ -357,7 +357,7 @@ absl::Status StorageEngine::open_caches() {
     }
     auto block_count = storage_metadata.block_count();
     block_metadata_cache.resize(0);
-    for (size_t block_id = 0; block_id < block_count; ++block_count) {
+    for (size_t block_id = 0; block_id < block_count; ++block_id) {
         auto res = get_block_metadata_from_file(block_id, block_metadata_fd);
         if (!res.ok()) {
             return res.status();
@@ -431,6 +431,11 @@ absl::StatusOr<StorageEngine::BlockId> StorageEngine::create_block() {
 
 absl::StatusOr<BlockReader> StorageEngine::get_block(
     StorageEngine::BlockId block_id) const {
+    if (block_id > storage_metadata.block_count()) {
+        return absl::UnavailableError(
+            "StorageEngine::get_block error: invalid block_id");
+    }
+
     int fd = get_block_file_fd(block_id);
     if (fd == -1) {
         return absl::UnavailableError(
@@ -454,6 +459,10 @@ absl::Status StorageEngine::counting_get_block(StorageEngine::BlockId block_id, 
 
 absl::Status StorageEngine::write(char* buffer,
                                   StorageEngine::BlockId block_id) {
+    if (block_id > storage_metadata.block_count()) {
+        return absl::UnavailableError(
+            "StorageEngine::write error: invalid block_id");
+    }
     const BlockMetadata block_metadata = get_block_metadata(block_id);
 
     int fd = get_block_file_fd(block_id);
